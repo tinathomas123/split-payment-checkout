@@ -1,0 +1,8 @@
+{
+ "items": [
+   {"productName": "Headphones", "quantity": 2, "unitPrice": 25.00},
+   {"productName": "Backpack", "quantity": 1, "unitPrice": 50.00}
+ ],
+ "cardAAmount": 60.00,
+ "cardBAmount": 30.00
+}

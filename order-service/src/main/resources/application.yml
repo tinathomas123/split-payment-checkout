@@ -1,0 +1,11 @@
+server:
+  port: 8081
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5433/orders
+    username: orders
+    password: orders
+  jpa:
+    hibernate:
+      ddl-auto: update   # creates/updates tables from the entities (fine for a demo; use migrations like Flyway in production)
+    open-in-view: false
