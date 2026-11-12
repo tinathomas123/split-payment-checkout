@@ -7,5 +7,28 @@ spring:
     password: orders
   jpa:
     hibernate:
-      ddl-auto: update   # creates/updates tables from the entities (fine for a demo; use migrations like Flyway in production)
+      ddl-auto: update
     open-in-view: false
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: false   # plain JSON, so each service uses its own event classes
+    consumer:
+      group-id: order-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      # ErrorHandlingDeserializer stops a malformed message from crashing the consumer in a loop
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JsonDeserializer
+        spring.json.value.default.type: com.splitpay.order.events.PaymentResultEvent
+        spring.json.use.type.headers: false
+        spring.json.trusted.packages: "*"
+
+app:
+  topics:
+    orders-placed: orders.placed
+    payment-results: payment.results

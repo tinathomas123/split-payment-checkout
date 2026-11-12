@@ -2,6 +2,9 @@ package com.splitpay.order.service;
 
 import com.splitpay.order.dto.CreateOrderRequest;
 import com.splitpay.order.dto.OrderItemRequest;
+import com.splitpay.order.events.PaymentResultEvent;
+import com.splitpay.order.events.PaymentResultEvent.PaymentOutcome;
+import com.splitpay.order.messaging.OrderEventPublisher;
 import com.splitpay.order.model.Order;
 import com.splitpay.order.model.OrderStatus;
 import com.splitpay.order.repository.OrderRepository;
@@ -25,6 +28,9 @@ class OrderServiceTest {
     @Mock
     private OrderRepository orderRepository;
 
+    @Mock
+    private OrderEventPublisher eventPublisher;
+
     @InjectMocks
     private OrderService orderService;
 
@@ -35,47 +41,48 @@ class OrderServiceTest {
                 new OrderItemRequest("Backpack", 1, new BigDecimal("50.00")));
     }
 
-    @Test
-    void createsOrderWhenSplitAddsUpToTotal() {
-        when(orderRepository.save(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
+    private CreateOrderRequest request(String cardA, String cardB) {
+        return new CreateOrderRequest(cart(), "4242", new BigDecimal(cardA), "1881", new BigDecimal(cardB));
+    }
 
-        Order order = orderService.createOrder(
-                new CreateOrderRequest(cart(), new BigDecimal("60.00"), new BigDecimal("40.00")));
-
-        assertThat(order.getTotalAmount()).isEqualByComparingTo("100.00");
-        assertThat(order.getStatus()).isEqualTo(OrderStatus.PENDING_PAYMENT);
-        verify(orderRepository).save(any(Order.class));
+    private Order pendingOrder() {
+        return new Order(List.of(), new BigDecimal("100.00"),
+                "4242", new BigDecimal("60.00"), "1881", new BigDecimal("40.00"));
     }
 
     @Test
-    void rejectsSplitThatDoesNotAddUpToTotal() {
-        CreateOrderRequest request =
-                new CreateOrderRequest(cart(), new BigDecimal("60.00"), new BigDecimal("30.00"));
+    void createsOrderAndPublishesEventWhenSplitAddsUpToTotal() {
+        when(orderRepository.save(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        assertThatThrownBy(() -> orderService.createOrder(request))
+        Order order = orderService.createOrder(request("60.00", "40.00"));
+
+        assertThat(order.getTotalAmount()).isEqualByComparingTo("100.00");
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.PENDING_PAYMENT);
+        verify(eventPublisher).publishOrderPlaced(order);
+    }
+
+    @Test
+    void rejectsSplitThatDoesNotAddUpAndPublishesNothing() {
+        assertThatThrownBy(() -> orderService.createOrder(request("60.00", "30.00")))
                 .isInstanceOf(InvalidSplitPaymentException.class)
                 .hasMessageContaining("must add up");
         verify(orderRepository, never()).save(any());
+        verifyNoInteractions(eventPublisher);
     }
 
     @Test
     void rejectsZeroAmountOnEitherCard() {
-        CreateOrderRequest request =
-                new CreateOrderRequest(cart(), new BigDecimal("100.00"), BigDecimal.ZERO);
-
-        assertThatThrownBy(() -> orderService.createOrder(request))
+        assertThatThrownBy(() -> orderService.createOrder(request("100.00", "0")))
                 .isInstanceOf(InvalidSplitPaymentException.class)
                 .hasMessageContaining("greater than zero");
-        verify(orderRepository, never()).save(any());
+        verifyNoInteractions(eventPublisher);
     }
 
     @Test
     void acceptsAmountsWithDifferentDecimalScales() {
-        // 60.0 + 40 = 100.00 should be valid; BigDecimal.equals would wrongly reject it
         when(orderRepository.save(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        Order order = orderService.createOrder(
-                new CreateOrderRequest(cart(), new BigDecimal("60.0"), new BigDecimal("40")));
+        Order order = orderService.createOrder(request("60.0", "40"));
 
         assertThat(order.getTotalAmount()).isEqualByComparingTo("100");
     }
@@ -86,5 +93,36 @@ class OrderServiceTest {
 
         assertThatThrownBy(() -> orderService.getOrder(99L))
                 .isInstanceOf(OrderNotFoundException.class);
+    }
+
+    @Test
+    void marksOrderPaidWhenPaymentCompleted() {
+        Order order = pendingOrder();
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(order));
+
+        orderService.applyPaymentResult(new PaymentResultEvent(1L, PaymentOutcome.COMPLETED, null));
+
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.PAID);
+    }
+
+    @Test
+    void marksOrderFailedWhenPaymentFailed() {
+        Order order = pendingOrder();
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(order));
+
+        orderService.applyPaymentResult(new PaymentResultEvent(1L, PaymentOutcome.FAILED, "Card 1881 declined"));
+
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.PAYMENT_FAILED);
+    }
+
+    @Test
+    void ignoresDuplicateResultForAnOrderThatIsAlreadyFinal() {
+        Order order = pendingOrder();
+        order.setStatus(OrderStatus.PAID);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(order));
+
+        orderService.applyPaymentResult(new PaymentResultEvent(1L, PaymentOutcome.FAILED, "late duplicate"));
+
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.PAID);
     }
 }

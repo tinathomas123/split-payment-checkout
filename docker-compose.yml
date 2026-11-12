@@ -1,4 +1,4 @@
-# One PostgreSQL container per service, so each service owns its own database.
+# One PostgreSQL container per service, plus a single-node Kafka broker.
 services:
   order-db:
     image: postgres:16
@@ -21,6 +21,13 @@ services:
       - "5434:5432"
     volumes:
       - payment-data:/var/lib/postgresql/data
+
+  # Kafka in KRaft mode (no ZooKeeper). The official image's defaults run a
+  # single broker that the services reach at localhost:9092.
+  kafka:
+    image: apache/kafka:3.8.0
+    ports:
+      - "9092:9092"
 
 volumes:
   order-data:
