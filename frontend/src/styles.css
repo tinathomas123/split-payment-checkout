@@ -1,0 +1,59 @@
+/* Deliberately simple styling: the focus of this project is the checkout flow. */
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: #1f2328;
+  background: #f6f8fa;
+}
+
+.app { max-width: 960px; margin: 0 auto; padding: 0 16px 48px; }
+
+.header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 16px 0; border-bottom: 1px solid #d0d7de; margin-bottom: 24px;
+}
+.header nav { display: flex; gap: 16px; }
+.brand { font-weight: 700; font-size: 1.2rem; }
+
+a { color: #0969da; text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+button, .button {
+  display: inline-block; padding: 8px 14px; border: none; border-radius: 6px;
+  background: #1f6feb; color: #fff; font-size: 0.95rem; cursor: pointer;
+}
+button:disabled { opacity: 0.6; cursor: wait; }
+button.secondary { background: #6e7781; }
+.link-button { background: none; color: #0969da; padding: 0; }
+
+.product-grid {
+  list-style: none; padding: 0;
+  display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+.card { background: #fff; border: 1px solid #d0d7de; border-radius: 8px; padding: 16px; }
+.card h2 { font-size: 1.1rem; margin: 0 0 4px; }
+.price { font-weight: 600; }
+
+.table { width: 100%; border-collapse: collapse; background: #fff; margin-bottom: 16px; }
+.table th, .table td { text-align: left; padding: 8px; border-bottom: 1px solid #d0d7de; }
+.qty { display: inline-block; min-width: 2em; text-align: center; }
+.table td button:not(.link-button) { padding: 2px 8px; }
+
+.total { font-size: 1.1rem; font-weight: 600; }
+
+.checkout-form { display: grid; gap: 16px; max-width: 420px; }
+fieldset { border: 1px solid #d0d7de; border-radius: 8px; background: #fff; }
+label { display: block; margin-bottom: 8px; }
+input { display: block; width: 100%; padding: 6px 8px; margin-top: 4px; font-size: 1rem; }
+
+.muted { color: #656d76; }
+.small { font-size: 0.85rem; }
+.notice { background: #fff8c5; padding: 8px 12px; border-radius: 6px; }
+.error { background: #ffebe9; color: #a40e26; padding: 8px 12px; border-radius: 6px; }
+
+.status { font-size: 1.3rem; font-weight: 700; }
+.status-pending_payment { color: #9a6700; }
+.status-paid { color: #1a7f37; }
+.status-payment_failed { color: #cf222e; }
