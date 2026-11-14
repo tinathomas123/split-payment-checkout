@@ -1,0 +1,94 @@
+# One PostgreSQL per service, as in docker-compose.yml.
+# Storage is an emptyDir, so data is lost if the pod is recreated. That's fine for a local demo;
+# a real deployment would use a StatefulSet with a PersistentVolumeClaim, or a managed database.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-db
+  namespace: splitpay
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: order-db }
+  template:
+    metadata:
+      labels: { app: order-db }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: orders
+            - name: POSTGRES_USER
+              valueFrom: { secretKeyRef: { name: db-credentials, key: ORDER_DB_USER } }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: db-credentials, key: ORDER_DB_PASSWORD } }
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "orders", "-d", "orders"]
+            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-db
+  namespace: splitpay
+spec:
+  selector: { app: order-db }
+  ports:
+    - port: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-db
+  namespace: splitpay
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: payment-db }
+  template:
+    metadata:
+      labels: { app: payment-db }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: payments
+            - name: POSTGRES_USER
+              valueFrom: { secretKeyRef: { name: db-credentials, key: PAYMENT_DB_USER } }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: db-credentials, key: PAYMENT_DB_PASSWORD } }
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "payments", "-d", "payments"]
+            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment-db
+  namespace: splitpay
+spec:
+  selector: { app: payment-db }
+  ports:
+    - port: 5432

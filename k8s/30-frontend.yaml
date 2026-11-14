@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: splitpay
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: frontend }
+  template:
+    metadata:
+      labels: { app: frontend }
+    spec:
+      containers:
+        - name: frontend
+          image: splitpay/frontend:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet: { path: /, port: 80 }
+            periodSeconds: 5
+          resources:
+            requests: { memory: "32Mi" }
+            limits: { memory: "128Mi" }
+---
+# NodePort exposes the front end on port 30080 of the kind node, which kind-config.yaml maps
+# to http://localhost:8080 on your machine.
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: splitpay
+spec:
+  type: NodePort
+  selector: { app: frontend }
+  ports:
+    - port: 80
+      targetPort: 80
+      nodePort: 30080

@@ -1,0 +1,5 @@
+# Everything for the project lives in its own namespace, so it's easy to see and delete.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: splitpay

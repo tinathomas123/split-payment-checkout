@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  namespace: splitpay
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: order-service }
+  template:
+    metadata:
+      labels: { app: order-service }
+    spec:
+      containers:
+        - name: order-service
+          image: splitpay/order-service:local
+          # The image is loaded into kind from your machine, so never try to pull it from a registry.
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8081
+          env:
+            - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+              valueFrom: { configMapKeyRef: { name: app-config, key: SPRING_KAFKA_BOOTSTRAP_SERVERS } }
+            - name: SPRING_DATASOURCE_URL
+              valueFrom: { configMapKeyRef: { name: app-config, key: ORDER_DB_URL } }
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom: { secretKeyRef: { name: db-credentials, key: ORDER_DB_USER } }
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom: { secretKeyRef: { name: db-credentials, key: ORDER_DB_PASSWORD } }
+          # Ready once the web server accepts connections. (If the database isn't up yet when
+          # the app starts, it exits and Kubernetes restarts it until it connects.)
+          readinessProbe:
+            tcpSocket: { port: 8081 }
+            initialDelaySeconds: 15
+            periodSeconds: 5
+          resources:
+            requests: { memory: "384Mi" }
+            limits: { memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+  namespace: splitpay
+spec:
+  selector: { app: order-service }
+  ports:
+    - port: 8081

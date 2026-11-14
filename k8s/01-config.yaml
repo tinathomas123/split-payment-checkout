@@ -1,0 +1,26 @@
+# Settings shared by the services. Spring Boot maps environment variables onto properties,
+# so SPRING_KAFKA_BOOTSTRAP_SERVERS overrides spring.kafka.bootstrap-servers from application.yml.
+# Inside the cluster, "kafka", "order-db" and "payment-db" are Kubernetes Service names.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: splitpay
+data:
+  SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  ORDER_DB_URL: "jdbc:postgresql://order-db:5432/orders"
+  PAYMENT_DB_URL: "jdbc:postgresql://payment-db:5432/payments"
+---
+# Database usernames and passwords. A Secret keeps them out of the ConfigMap.
+# (Secret values are only base64-encoded, not encrypted; a real cluster would use a secrets manager.)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-credentials
+  namespace: splitpay
+type: Opaque
+stringData:
+  ORDER_DB_USER: orders
+  ORDER_DB_PASSWORD: orders
+  PAYMENT_DB_USER: payments
+  PAYMENT_DB_PASSWORD: payments

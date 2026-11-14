@@ -1,0 +1,11 @@
+# Local Kubernetes cluster for the project:
+#   kind create cluster --name splitpay --config kind-config.yaml
+# The port mapping makes the front end's NodePort (30080) reachable at http://localhost:8080.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 8080
+        protocol: TCP
