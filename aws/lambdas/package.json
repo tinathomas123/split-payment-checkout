@@ -1,0 +1,14 @@
+{
+  "name": "split-payment-lambdas",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Simulated payment Lambdas for the Step Functions split-payment saga",
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc && node --test \"dist/__tests__/*.test.js\""
+  },
+  "devDependencies": {
+    "@types/node": "22.9.0",
+    "typescript": "5.6.3"
+  }
+}

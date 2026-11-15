@@ -1,0 +1,162 @@
+{
+  "Comment": "Split-payment saga: charge card A, then card B. If card B fails, refund card A (compensating action) and mark the order failed.",
+  "StartAt": "ChargeCardA",
+  "States": {
+    "ChargeCardA": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${charge_card_arn}",
+        "Payload": {
+          "orderId.$": "$.orderId",
+          "cardLast4.$": "$.cardA.last4",
+          "amount.$": "$.cardA.amount"
+        }
+      },
+      "ResultSelector": { "approved.$": "$.Payload.approved" },
+      "ResultPath": "$.cardAResult",
+      "Retry": [
+        {
+          "ErrorEquals": ["ProviderUnavailableError"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        },
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "CardAFailed"
+        }
+      ],
+      "Next": "WasCardAApproved"
+    },
+
+    "WasCardAApproved": {
+      "Type": "Choice",
+      "Choices": [
+        { "Variable": "$.cardAResult.approved", "BooleanEquals": true, "Next": "ChargeCardB" }
+      ],
+      "Default": "CardAFailed"
+    },
+
+    "CardAFailed": {
+      "Type": "Pass",
+      "Result": "Card A declined or could not be charged; card B was not charged",
+      "ResultPath": "$.failureReason",
+      "Next": "MarkOrderFailed"
+    },
+
+    "ChargeCardB": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${charge_card_arn}",
+        "Payload": {
+          "orderId.$": "$.orderId",
+          "cardLast4.$": "$.cardB.last4",
+          "amount.$": "$.cardB.amount"
+        }
+      },
+      "ResultSelector": { "approved.$": "$.Payload.approved" },
+      "ResultPath": "$.cardBResult",
+      "Retry": [
+        {
+          "ErrorEquals": ["ProviderUnavailableError"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        },
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "RefundCardA"
+        }
+      ],
+      "Next": "WasCardBApproved"
+    },
+
+    "WasCardBApproved": {
+      "Type": "Choice",
+      "Choices": [
+        { "Variable": "$.cardBResult.approved", "BooleanEquals": true, "Next": "MarkOrderPaid" }
+      ],
+      "Default": "RefundCardA"
+    },
+
+    "RefundCardA": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${refund_card_arn}",
+        "Payload": {
+          "orderId.$": "$.orderId",
+          "cardLast4.$": "$.cardA.last4",
+          "amount.$": "$.cardA.amount"
+        }
+      },
+      "ResultSelector": { "refunded.$": "$.Payload.refunded" },
+      "ResultPath": "$.refundResult",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 5,
+          "BackoffRate": 2
+        }
+      ],
+      "Next": "CardBFailed"
+    },
+
+    "CardBFailed": {
+      "Type": "Pass",
+      "Result": "Card B declined or could not be charged; card A refunded",
+      "ResultPath": "$.failureReason",
+      "Next": "MarkOrderFailed"
+    },
+
+    "MarkOrderPaid": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${update_order_status_arn}",
+        "Payload": {
+          "orderId.$": "$.orderId",
+          "status": "PAID"
+        }
+      },
+      "OutputPath": "$.Payload",
+      "End": true
+    },
+
+    "MarkOrderFailed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${update_order_status_arn}",
+        "Payload": {
+          "orderId.$": "$.orderId",
+          "status": "PAYMENT_FAILED",
+          "reason.$": "$.failureReason"
+        }
+      },
+      "OutputPath": "$.Payload",
+      "End": true
+    }
+  }
+}

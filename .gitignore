@@ -4,3 +4,9 @@ target/
 .DS_Store
 node_modules/
 dist/
+
+# Terraform: local state and plugins (never commit state; it can contain secrets)
+.terraform/
+*.tfstate
+*.tfstate.*
+aws/terraform/build/
