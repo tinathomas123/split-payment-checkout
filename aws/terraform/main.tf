@@ -87,7 +87,7 @@ resource "aws_iam_role" "sfn" {
 # Each Lambda ARN plus ":*", which covers invoking a specific version or alias.
 data "aws_iam_policy_document" "sfn_invoke_lambdas" {
   statement {
-    actions   = ["lambda:InvokeFunction"]
+    actions = ["lambda:InvokeFunction"]
     resources = flatten([
       for fn in aws_lambda_function.this : [fn.arn, "${fn.arn}:*"]
     ])
