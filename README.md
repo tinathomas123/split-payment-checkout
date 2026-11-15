@@ -192,9 +192,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on every push:
 
 ## What I learned
 
-<!-- Rewrite this section in your own words before publishing. -->
-
-- How to keep a multi-step payment consistent without a distributed transaction, and the trade-offs between choreography (Kafka events) and orchestration (Step Functions).
-- Why the place an event is published from matters (after commit, and what the outbox pattern adds).
-- How Kubernetes Deployments, Services, ConfigMaps and Secrets fit together, and how services find each other by name inside a cluster.
-- Defining cloud infrastructure as code with Terraform, including IAM roles scoped to exactly what each service needs.
+- **Sagas instead of distributed transactions:** a payment across two cards can't be one database transaction, so each step that succeeds has a compensating action (refunding card A if card B fails). I built the saga two ways: choreographed with Kafka events, where each service reacts on its own, and orchestrated with Step Functions, where one state machine controls every step and shows its history.
+- **When an event is published matters:** publishing after the database commit means no event is sent for a rolled-back order. A crash between the commit and the send could still lose an event; the transactional outbox pattern closes that gap, and idempotent consumers handle any duplicates.
+- **How Kubernetes fits together:** Deployments keep containers running, Services give them stable names that other apps use through the cluster's DNS, and ConfigMaps and Secrets supply settings as environment variables, so the same image runs locally and in the cluster.
+- **Infrastructure as code:** Terraform creates and destroys the Lambdas, state machine and IAM roles from version-controlled files, with each role allowed only what it needs (the state machine can invoke only its three Lambdas).
