@@ -81,6 +81,10 @@ kubectl apply -f k8s/
 kubectl get pods -n splitpay -w
 ```
 
+**Alternative: Docker Desktop's Kubernetes** (Settings → Kubernetes → Enable, cluster type kubeadm).
+Skip `kind create cluster` and `kind load`; build the images, run `kubectl config use-context docker-desktop`,
+then `kubectl apply -f k8s/` and open http://localhost:30080.
+
 When every pod shows `1/1 Running` (the services may restart once or twice while Postgres and Kafka start), open http://localhost:8080.
 
 | File | What it creates |
