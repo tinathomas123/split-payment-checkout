@@ -1,36 +1,91 @@
 # Split-Payment Checkout
 
-A customer pays for one order with two cards. Two Spring Boot services, each with its own PostgreSQL database, communicate through Kafka events. A React + TypeScript front end lets the customer shop, split the total across two cards and watch the order status. Everything can run locally or in a Kubernetes cluster (kind).
+[![CI](https://github.com/tinathomas123/split-payment-checkout/actions/workflows/ci.yml/badge.svg)](https://github.com/tinathomas123/split-payment-checkout/actions/workflows/ci.yml)
 
-| Service | Port | Database (Docker) |
-|---|---|---|
-| order-service | 8081 | `orders` on localhost:5433 |
-| payment-service | 8082 | `payments` on localhost:5434 |
-| Kafka broker | 9092 | |
-| frontend (Vite dev server) | 5173 | |
+A customer pays for one order with **two cards**. The project shows how to keep a payment that spans several steps consistent when one of them fails: if card B is declined after card A has been charged, card A is refunded automatically.
 
-## How it works
+It is built twice, in two styles:
 
-1. `POST /orders` saves the order as `PENDING_PAYMENT` and, once committed, publishes **OrderPlaced** to the `orders.placed` topic.
-2. payment-service consumes it and charges card A, then card B (simulated provider).
-   - Both approved: publishes **COMPLETED** to `payment.results`.
-   - Card B declined: refunds card A (compensating action) and publishes **FAILED**.
-   - Card A declined: card B is never charged; publishes **FAILED**.
+1. **Event-driven microservices:** two Spring Boot services, each with its own PostgreSQL database, communicating through Kafka, with a React + TypeScript front end. Runs locally or in Kubernetes.
+2. **Serverless orchestration:** the same split-payment saga as an AWS Step Functions state machine calling Node.js (TypeScript) Lambdas, created and destroyed with Terraform.
+
+**Tech:** Java 21, Spring Boot, Spring Kafka, PostgreSQL, Apache Kafka (KRaft), React, TypeScript, Vite, Docker, Kubernetes, nginx, AWS Step Functions, AWS Lambda (Node.js), Terraform, GitHub Actions.
+
+## Architecture
+
+### Microservices (Kafka)
+
+```mermaid
+flowchart LR
+    Browser["Browser<br/>React + TypeScript"] -->|"/api/..."| Nginx["nginx<br/>(Vite in development)"]
+    Nginx -->|"POST /orders<br/>GET /orders/{id}"| OS["order-service<br/>Spring Boot :8081"]
+    Nginx -->|"GET /payments"| PS["payment-service<br/>Spring Boot :8082"]
+    OS --- ODB[("orders<br/>PostgreSQL")]
+    PS --- PDB[("payments<br/>PostgreSQL")]
+    OS -->|"OrderPlaced"| T1{{"Kafka<br/>orders.placed"}}
+    T1 --> PS
+    PS -->|"PaymentResult"| T2{{"Kafka<br/>payment.results"}}
+    T2 --> OS
+    PS -.->|"after 3 failed retries"| DLT{{"orders.placed.DLT"}}
+```
+
+1. `POST /orders` saves the order as `PENDING_PAYMENT` and, once the transaction commits, publishes **OrderPlaced**.
+2. payment-service charges card A, then card B (simulated provider):
+   - both approved: publishes **COMPLETED**;
+   - card B declined: refunds card A (compensating action) and publishes **FAILED**;
+   - card A declined: card B is never charged; publishes **FAILED**.
 3. order-service consumes the result and sets the order to `PAID` or `PAYMENT_FAILED`.
+4. The front end's order page checks the status every 2 seconds until it changes.
 
-**Test cards (last 4 digits):** `0002` is declined; `9999` simulates the payment provider being down; anything else is approved.
+### Serverless saga (AWS Step Functions)
 
-**Retries and dead-letter topic:** if processing throws a technical error (for example, provider down), payment-service retries the message 3 times, 2 seconds apart, then publishes it to `orders.placed.DLT` so it doesn't block later messages. A declined card is a normal business outcome, not an error, so it isn't retried.
+```mermaid
+flowchart TD
+    Start([Start]) --> A["ChargeCardA<br/>Lambda, retried 3 times if the provider is down"]
+    A -->|approved| B["ChargeCardB<br/>Lambda, retried 3 times if the provider is down"]
+    A -->|"declined or error"| FailA["Card A failed<br/>(nothing to refund)"]
+    B -->|approved| Paid["MarkOrderPaid<br/>Lambda"]
+    B -->|"declined or error"| Refund["RefundCardA<br/>Lambda (compensating action)"]
+    Refund --> FailB["Card B failed"]
+    FailA --> Failed["MarkOrderFailed<br/>Lambda"]
+    FailB --> Failed
+    Paid --> End([End])
+    Failed --> End
+```
 
-**Idempotency:** payment-service never processes the same order twice, and order-service ignores repeated results, because Kafka can deliver a message more than once.
+Screenshots of real executions (the AWS resources were destroyed afterwards):
 
-## Run
+| Success path | Refund path |
+|---|---|
+| ![Success path](docs/screenshots/step-functions-success.png) | ![Refund path](docs/screenshots/step-functions-refund.png) |
 
-1. Start Postgres and Kafka: `docker compose up -d`
-2. Start both services: `mvn spring-boot:run` in `order-service` and in `payment-service` (separate terminals).
-3. Run the tests: `mvn test` in each service folder (no Docker needed; they use Mockito).
+## Test cards
 
-## Try it (from the project folder)
+Only the last 4 digits are used, and payments are simulated.
+
+| Last 4 digits | Result |
+|---|---|
+| `0002` | Declined (a business outcome: not retried) |
+| `9999` | Payment provider down (a technical error: retried) |
+| anything else | Approved |
+
+## Run locally
+
+Needs Docker Desktop, Java 21, Maven and Node.js.
+
+1. Start PostgreSQL and Kafka: `docker compose up -d`
+2. Start each service in its own terminal: `mvn spring-boot:run` in `order-service` and in `payment-service`.
+3. Start the front end:
+   ```
+   cd frontend
+   npm install
+   npm run dev
+   ```
+4. Open http://localhost:5173, add items to the cart, and check out with two cards.
+
+The Vite dev server forwards `/api/orders` to port 8081 and `/api/payments` to port 8082, so the services need no CORS settings.
+
+**Without the front end:**
 
 ```
 curl -X POST http://localhost:8081/orders -H "Content-Type: application/json" -d @requests/order-success.json
@@ -38,12 +93,7 @@ curl http://localhost:8081/orders/1
 curl "http://localhost:8082/payments?orderId=1"
 ```
 
-The order should change from `PENDING_PAYMENT` to `PAID` within a second or two.
-
-Other cases:
-- `requests/order-card-b-declined.json`: order becomes `PAYMENT_FAILED`; payments show card A `REFUNDED`, card B `FAILED`.
-- `requests/order-provider-down.json`: watch payment-service's log show 3 retries, then the message goes to the dead-letter topic; the order stays `PENDING_PAYMENT`.
-- `requests/order-bad-split.json`: rejected straight away with `400 Bad Request`.
+Other cases are in `requests/`: `order-card-b-declined.json` (refund), `order-provider-down.json` (retries, then the dead-letter topic) and `order-bad-split.json` (`400 Bad Request`).
 
 See what's in the dead-letter topic:
 
@@ -51,69 +101,100 @@ See what's in the dead-letter topic:
 docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic orders.placed.DLT --from-beginning
 ```
 
-(Press Ctrl+C to stop.)
+## Run in Kubernetes
 
-## Front end (React + TypeScript)
-
-Pages: product list, cart, checkout (card A amount is entered; card B pays the rest) and an order status page that checks the order every 2 seconds until it is `PAID` or `PAYMENT_FAILED`.
-
-With Postgres, Kafka and both services running (see **Run**):
+Give Docker Desktop at least 6 GB of memory. Build the images from the project folder:
 
 ```
-cd frontend
-npm install
-npm run dev
-```
-
-Open http://localhost:5173. The Vite dev server forwards `/api/orders` to port 8081 and `/api/payments` to port 8082, so the browser only talks to one address and the services need no CORS settings. Use test card `0002` or `9999` at checkout to see a declined payment or the provider-down case.
-
-## Run in Kubernetes (kind)
-
-Needs Docker Desktop (give it at least 6 GB of memory), [kind](https://kind.sigs.k8s.io/) and kubectl. Run from the project folder:
-
-```
-kind create cluster --name splitpay --config kind-config.yaml
 docker build -t splitpay/order-service:local order-service
 docker build -t splitpay/payment-service:local payment-service
 docker build -t splitpay/frontend:local frontend
-kind load docker-image splitpay/order-service:local splitpay/payment-service:local splitpay/frontend:local --name splitpay
+```
+
+**Option A: Docker Desktop's Kubernetes** (Settings → Kubernetes → Enable, cluster type kubeadm):
+
+```
+kubectl config use-context docker-desktop
 kubectl apply -f k8s/
 kubectl get pods -n splitpay -w
 ```
 
-**Alternative: Docker Desktop's Kubernetes** (Settings → Kubernetes → Enable, cluster type kubeadm).
-Skip `kind create cluster` and `kind load`; build the images, run `kubectl config use-context docker-desktop`,
-then `kubectl apply -f k8s/` and open http://localhost:30080.
+Open http://localhost:30080.
 
-When every pod shows `1/1 Running` (the services may restart once or twice while Postgres and Kafka start), open http://localhost:8080.
+**Option B: kind**
+
+```
+kind create cluster --name splitpay --config kind-config.yaml
+kind load docker-image splitpay/order-service:local splitpay/payment-service:local splitpay/frontend:local --name splitpay
+kubectl apply -f k8s/
+```
+
+Open http://localhost:8080 (`kind-config.yaml` maps it to the front end's NodePort).
+
+The services may restart once or twice at first while PostgreSQL and Kafka start; Kubernetes restarts them until they connect.
 
 | File | What it creates |
 |---|---|
-| `kind-config.yaml` | A one-node cluster; maps the front end's NodePort 30080 to localhost:8080 |
 | `k8s/01-config.yaml` | ConfigMap (Kafka and database addresses) and Secret (database credentials) |
 | `k8s/10-databases.yaml` | A Deployment and Service for each PostgreSQL database |
 | `k8s/11-kafka.yaml` | Single-node Kafka (KRaft) |
-| `k8s/20-…`, `k8s/21-…` | Deployment and Service for each Spring Boot service |
-| `k8s/30-frontend.yaml` | nginx serving the React app and forwarding `/api/...` to the services |
+| `k8s/20-…`, `k8s/21-…` | A Deployment and Service for each Spring Boot service |
+| `k8s/30-frontend.yaml` | nginx serving the React app and forwarding `/api/...` to the services (NodePort 30080) |
 
-Useful commands:
+Remove everything with `kubectl delete namespace splitpay`.
+
+## Run the Step Functions saga on AWS
+
+Needs an AWS account, the AWS CLI (configured with `aws configure`) and Terraform. **Set up an AWS budget alert first.** The resources cost almost nothing for a few test runs, and `terraform destroy` removes them.
 
 ```
-kubectl logs -n splitpay deploy/payment-service -f
-kubectl exec -n splitpay deploy/kafka -- /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic orders.placed.DLT --from-beginning
-kind delete cluster --name splitpay
+cd aws/lambdas
+npm install
+npm test
+cd ../terraform
+terraform init
+terraform apply
 ```
 
-After changing code, rebuild the image, run `kind load docker-image ...` again, then `kubectl rollout restart -n splitpay deploy/<name>`.
+Start an execution (copy the ARN from Terraform's `state_machine_arn` output), from the `aws/terraform` folder:
+
+```
+aws stepfunctions start-execution --state-machine-arn <state_machine_arn> --input file://../test-inputs/success.json
+aws stepfunctions start-execution --state-machine-arn <state_machine_arn> --input file://../test-inputs/card-b-declined.json
+```
+
+Also in `aws/test-inputs/`: `card-a-declined.json` and `card-b-provider-down.json` (three retries, then card A is refunded). Watch each run in the AWS console under Step Functions → State machines → `splitpay-split-payment-saga`.
+
+When finished: `terraform destroy`
+
+## Continuous integration
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on every push:
+
+- Java unit tests for both services (JUnit 5, Mockito);
+- Lambda unit tests (Node.js test runner);
+- front-end type check and production build;
+- `terraform fmt` and `terraform validate`;
+- Docker builds of the three images, once the tests pass.
 
 ## Design notes
 
-- Money uses `BigDecimal`, compared with `compareTo` (not `equals`, which treats 10.0 and 10.00 as different).
-- Only the last 4 digits of each card are stored, never the full number.
-- Each service owns its own copy of the event classes and sends plain JSON (no Java type headers), so the services stay independent.
-- Events are keyed by order ID, so all events for one order stay in order on the same partition.
-- OrderPlaced is sent after the database commit. A production system would use the transactional outbox pattern so an event can't be lost if the app crashes between the commit and the send.
-- `ddl-auto: update` creates the tables automatically; a production system would use migrations (Flyway or Liquibase).
-- Settings that differ between environments (database and Kafka addresses) come from environment variables, which Spring Boot maps onto `application.yml` properties; in Kubernetes they come from a ConfigMap and a Secret.
-- The front end works in whole cents, so splitting a total never produces rounding errors.
-- Images are multi-stage builds: Maven or Node builds the app, and only the runtime (JRE or nginx) goes into the final image, which runs as a non-root user where possible.
+- **Publish after commit:** OrderPlaced is sent only after the order's transaction commits, so no event is sent for an order that was rolled back. A crash between the commit and the send could still lose the event; the **transactional outbox pattern** would close that gap.
+- **Idempotent consumers:** Kafka can deliver a message more than once, so payment-service never processes the same order twice and order-service ignores repeated results.
+- **Business outcome versus technical error:** a declined card is a normal result and is not retried; the provider being down is an exception, retried 3 times and then sent to a dead-letter topic (Kafka) or caught and compensated (Step Functions).
+- **Saga with a compensating action:** there is no single transaction across two card charges, so a failed second charge is undone by refunding the first.
+- **Choreography versus orchestration:** the Kafka version is choreographed (each service reacts to events); the Step Functions version is orchestrated (one state machine controls every step and shows its history visually).
+- **Money:** `BigDecimal` compared with `compareTo` in Java; whole cents in the front end, so splitting a total never produces rounding errors.
+- **Card data:** only the last 4 digits are ever sent or stored.
+- **Configuration:** the same image runs everywhere; database and Kafka addresses come from environment variables (a ConfigMap and Secret in Kubernetes).
+- **Least privilege:** the Step Functions role can invoke only the three saga Lambdas; the Lambdas can only write logs.
+- **Not production-ready, by design:** `ddl-auto: update` instead of migrations (Flyway), databases on `emptyDir` instead of persistent volumes, simulated payment provider, no authentication.
+
+## What I learned
+
+<!-- Rewrite this section in your own words before publishing. -->
+
+- How to keep a multi-step payment consistent without a distributed transaction, and the trade-offs between choreography (Kafka events) and orchestration (Step Functions).
+- Why the place an event is published from matters (after commit, and what the outbox pattern adds).
+- How Kubernetes Deployments, Services, ConfigMaps and Secrets fit together, and how services find each other by name inside a cluster.
+- Defining cloud infrastructure as code with Terraform, including IAM roles scoped to exactly what each service needs.
